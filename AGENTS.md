@@ -51,7 +51,7 @@ Dieses Repository enthält einen kleinen Spieleverleih als CLI-Anwendung in nati
 - Ergänze kurze Kommentare unmittelbar am relevanten Code; entferne veraltete oder irreführende Kommentare bei Änderungen.
 - Verwende PHPDoc dort, wo PHP-Typen allein Informationen nicht ausdrücken (z. B. Array-Elementtypen) oder eine Methode besondere Vorbedingungen hat.
 - Halte die `README.md` bei Änderungen an Bedienung, Startbefehlen, Verhalten oder Architektur aktuell.
-- Die später gewünschte ausführliche README soll Entwicklern ohne Projektkenntnisse Zweck, Bedienung, Architektur, Persistenz und Tests erklären.
+- Halte die `README.md` kurz, natürlich und persönlich in Ich-Form mit insgesamt 3–5 vollständigen Sätzen; behalte `# Spieleverleih` und die drei bestehenden Fragen als wortgleiche `###`-Überschriften bei und verzichte auf Tabellen sowie zusätzliche Abschnitte.
 - Dokumentiere keine geplanten Funktionen als bereits implementiert.
 
 ## Tests und Verifikation
