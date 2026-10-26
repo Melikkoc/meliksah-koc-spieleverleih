@@ -58,6 +58,15 @@ final class GameStore
     }
 
     /** @return list<Game> */
+    public function getGamesInShelf(int $id): array
+    {
+        $shelf = $this->shelves[$id]
+            ?? throw new OutOfBoundsException(sprintf('Regal %d existiert nicht.', $id));
+
+        return $shelf->getGames();
+    }
+
+    /** @return list<Game> */
     public function getAllGames(): array
     {
         $games = [];

@@ -6,6 +6,7 @@ require_once __DIR__ . '/src/Person.php';
 require_once __DIR__ . '/src/Game.php';
 require_once __DIR__ . '/src/Shelf.php';
 require_once __DIR__ . '/src/GameStore.php';
+require_once __DIR__ . '/src/JsonStorage.php';
 
 function readInput(string $prompt): string
 {
@@ -73,13 +74,24 @@ function printShelves(GameStore $store): void
     echo "Ausgeliehene Spiele behalten ihren Regalplatz.\n";
 }
 
-// Jeder Programmstart beginnt mit einem neuen Bestand im Arbeitsspeicher.
-$store = new GameStore();
-$store->addShelf(1, 3);
-$store->addShelf(2, 2);
-$store->addNewGame(1, 'Mario Kart 8', 'Switch', 0, 1, 4);
-$store->addNewGame(2, 'Die Siedler von Catan', 'Brettspiel', 6, 3, 4);
-$store->addNewGame(1, 'The Last of Us', 'PlayStation', 18, 1, 1);
+try {
+    $storage = new JsonStorage(__DIR__ . '/spieleverleih.json');
+    $store = $storage->load();
+
+    // Nur bei einer fehlenden Datendatei den Ausgangsbestand anlegen.
+    if ($store === null) {
+        $store = new GameStore();
+        $store->addShelf(1, 3);
+        $store->addShelf(2, 2);
+        $store->addNewGame(1, 'Mario Kart 8', 'Switch', 0, 1, 4);
+        $store->addNewGame(2, 'Die Siedler von Catan', 'Brettspiel', 6, 3, 4);
+        $store->addNewGame(1, 'The Last of Us', 'PlayStation', 18, 1, 1);
+        $storage->save($store);
+    }
+} catch (RuntimeException $exception) {
+    fwrite(STDERR, 'Fehler beim Start: ' . $exception->getMessage() . "\n");
+    exit(1);
+}
 
 echo "Willkommen beim Spieleverleih!\n";
 
@@ -109,12 +121,14 @@ while (true) {
                 $age = readInteger(sprintf('Alter (%d–%d Jahre): ', Person::MIN_AGE, Person::MAX_AGE));
                 $person = new Person($name, $age);
                 $store->borrowGame($gameId, $person);
+                $storage->save($store);
                 printf("„%s“ wurde an %s ausgeliehen.\n", $store->getGameById($gameId)->title, $person->name);
                 break;
 
             case '4':
                 $gameId = readInteger('Spiel-ID: ');
                 $store->returnGame($gameId);
+                $storage->save($store);
                 printf("„%s“ wurde zurückgegeben und ist wieder verfügbar.\n", $store->getGameById($gameId)->title);
                 break;
 
@@ -134,6 +148,7 @@ while (true) {
                     readInteger('Minimale Spieleranzahl: '),
                     readInteger('Maximale Spieleranzahl: '),
                 );
+                $storage->save($store);
                 printf("„%s“ wurde mit Spiel-ID %d zu Regal %d hinzugefügt.\n", $game->title, $game->id, $shelfId);
                 break;
 
@@ -147,5 +162,9 @@ while (true) {
     } catch (InvalidArgumentException | DomainException | OutOfBoundsException | OverflowException $exception) {
         // Nach einem erwartbaren Fehler kann der Benutzer im Hauptmenü eine neue Aktion wählen.
         echo 'Fehler: ' . $exception->getMessage() . "\n";
+    } catch (RuntimeException $exception) {
+        fwrite(STDERR, 'Fehler beim Speichern: ' . $exception->getMessage()
+            . "\nDas Programm wird beendet; die aktuelle Änderung wurde nicht gespeichert.\n");
+        exit(1);
     }
 }

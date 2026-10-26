@@ -22,6 +22,15 @@ Dieses Repository enthält einen kleinen Spieleverleih als CLI-Anwendung in nati
 - Verwende verständliche Exceptions für ungültige Operationen und fange erwartbare Fehler an der CLI-Grenze ab.
 - Nutze Sprachfeatures nur, wenn sie von der lokal installierten PHP-Version unterstützt werden.
 
+## Datenpersistenz
+
+- Die CLI speichert Regale, Spiele und aktive Ausleihen in `spieleverleih.json`; Dateizugriffe liegen in `src/JsonStorage.php`.
+- Speichere nach erfolgreichen Änderungen und lade den Bestand beim Start; Beispieldaten werden nur bei fehlender Datei angelegt.
+- Prüfe beim Laden sowohl die JSON-Struktur als auch Feldtypen und bestehende Geschäftsregeln; beschädigte Dateien dürfen nicht überschrieben werden.
+- Behalte die Sperre für den gesamten Programmlauf und das vollständige Schreiben vor dem atomaren Ersetzen der Datendatei bei.
+- Melde Lade- und Speicherfehler verständlich; Erfolgsmeldungen dürfen erst nach erfolgreichem Speichern erscheinen.
+- Daten-, Sperr- und temporäre Schreibdateien gehören nicht ins Repository; Dateitests verwenden einen getrennten temporären Bestand.
+
 ## Sicherheit und Robustheit
 
 - Behandle sämtliche CLI-Eingaben als unzuverlässig: prüfe Typ, Format, Wertebereich und Existenz referenzierter Daten, bevor du Zustände änderst.
@@ -36,7 +45,7 @@ Dieses Repository enthält einen kleinen Spieleverleih als CLI-Anwendung in nati
 - Ergänze kurze Kommentare unmittelbar am relevanten Code; entferne veraltete oder irreführende Kommentare bei Änderungen.
 - Verwende PHPDoc dort, wo PHP-Typen allein Informationen nicht ausdrücken (z. B. Array-Elementtypen) oder eine Methode besondere Vorbedingungen hat.
 - Halte die `README.md` bei Änderungen an Bedienung, Startbefehlen, Verhalten oder Architektur aktuell.
-- Beachte die Vorgabe der Challenge: Die README soll kurz bleiben (3–5 Sätze zu Umsetzung/Start, Entscheidungen und nächsten Schritten).
+- Die später gewünschte ausführliche README soll Entwicklern ohne Projektkenntnisse Zweck, Bedienung, Architektur, Persistenz und Tests erklären.
 - Dokumentiere keine geplanten Funktionen als bereits implementiert.
 
 ## Tests und Verifikation

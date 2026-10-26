@@ -6,6 +6,7 @@ require_once __DIR__ . '/src/Person.php';
 require_once __DIR__ . '/src/Game.php';
 require_once __DIR__ . '/src/Shelf.php';
 require_once __DIR__ . '/src/GameStore.php';
+require_once __DIR__ . '/src/JsonStorage.php';
 
 function expect(bool $condition, string $message): void
 {
@@ -46,7 +47,169 @@ function createStore(): GameStore
     return $store;
 }
 
+function withStorageFile(callable $test): void
+{
+    $directory = sys_get_temp_dir() . '/spieleverleih-test-' . bin2hex(random_bytes(8));
+
+    if (!mkdir($directory, 0700)) {
+        throw new RuntimeException('Das Testverzeichnis konnte nicht angelegt werden.');
+    }
+
+    try {
+        $test($directory . '/bestand.json');
+    } finally {
+        // Testdateien bleiben getrennt vom echten Bestand und werden auch bei Fehlern entfernt.
+        foreach (array_diff(scandir($directory), ['.', '..']) as $name) {
+            $path = $directory . '/' . $name;
+            is_dir($path) ? rmdir($path) : unlink($path);
+        }
+
+        rmdir($directory);
+    }
+}
+
 $tests = [
+    'Eine fehlende Datendatei wird von einem gespeicherten leeren Laden unterschieden' => function (): void {
+        withStorageFile(function (string $path): void {
+            $storage = new JsonStorage($path);
+            expect($storage->load() === null, 'Bei einer fehlenden Datei muss null zurückgegeben werden.');
+            expect(!file_exists($path), 'Laden darf keine Datendatei anlegen.');
+            $storage->save(new GameStore());
+            $loaded = $storage->load();
+            expect($loaded instanceof GameStore, 'Ein gespeicherter leerer Laden muss geladen werden.');
+            expect($loaded->getShelfOverview() === [], 'Ein leerer Laden darf keine Beispielregale erhalten.');
+        });
+    },
+    'JSON erhält Spieldaten, Regalzuordnung, leere Regale und aktive Ausleihen' => function (): void {
+        withStorageFile(function (string $path): void {
+            $store = createStore();
+            $store->addShelf(3, 2);
+            $store->addNewGame(2, 'Ärger im Märchenwald', 'Brettspiel', 6, 2, 5);
+            $store->borrowGame(3, new Person('Müller', 99));
+            $storage = new JsonStorage($path);
+            $storage->save($store);
+            unset($storage);
+
+            $storage = new JsonStorage($path);
+            $loaded = $storage->load();
+            expect($loaded instanceof GameStore, 'Der gespeicherte Laden fehlt.');
+            expect($loaded->getShelfOverview() === $store->getShelfOverview(), 'Die Regaldaten wurden verändert.');
+
+            foreach ($store->getAllGames() as $game) {
+                $loadedGame = $loaded->getGameById($game->id);
+                expect(get_object_vars($loadedGame) === get_object_vars($game), 'Die Spieldaten wurden verändert.');
+                expect($loadedGame->isAvailable() === $game->isAvailable(), 'Der Ausleihstatus wurde verändert.');
+            }
+
+            foreach ($store->getShelfOverview() as $shelf) {
+                $ids = static fn (Game $game): int => $game->id;
+                expect(
+                    array_map($ids, $loaded->getGamesInShelf($shelf['id'])) === array_map($ids, $store->getGamesInShelf($shelf['id'])),
+                    'Die Regalzuordnung wurde verändert.',
+                );
+            }
+
+            expect($loaded->getGameById(3)->getBorrower()?->name === 'Müller', 'Der Name der Person wurde nicht geladen.');
+            expect($loaded->getGameById(3)->getBorrower()?->age === 99, 'Das Alter der Person wurde nicht geladen.');
+        });
+    },
+    'Nach erneutem Laden funktionieren Rückgabe, USK-Prüfung und nächste Spiel-ID' => function (): void {
+        withStorageFile(function (string $path): void {
+            $storage = new JsonStorage($path);
+            $store = createStore();
+            $store->borrowGame(3, new Person('Alex', 18));
+            $storage->save($store);
+            $loaded = $storage->load();
+            expectException(DomainException::class, fn () => $loaded->borrowGame(3, new Person('Kim', 20)));
+            $loaded->returnGame(3);
+            expectException(DomainException::class, fn () => $loaded->borrowGame(3, new Person('Kim', 17)));
+            $game = $loaded->addNewGame(2, 'Neues Spiel', 'Switch', 0, 1, 4);
+            expect($game->id === 4, 'Die automatische ID muss nach dem Laden fortgesetzt werden.');
+            $storage->save($loaded);
+            expect($storage->load()->getGameById(3)->isAvailable(), 'Die Rückgabe wurde nicht gespeichert.');
+            expect($storage->load()->getGameById(4)->title === 'Neues Spiel', 'Das neue Spiel wurde nicht gespeichert.');
+        });
+    },
+    'Kaputte oder falsch aufgebaute JSON-Dateien werden nicht überschrieben' => function (): void {
+        withStorageFile(function (string $path): void {
+            $storage = new JsonStorage($path);
+
+            foreach (['', '{kaputt', 'null', '[]', '{}', '{"shelves": {}}', '{"shelves": [null]}'] as $json) {
+                file_put_contents($path, $json);
+                expectException(RuntimeException::class, fn () => $storage->load());
+                expect(file_get_contents($path) === $json, 'Eine ungültige Datei darf beim Laden nicht verändert werden.');
+            }
+        });
+    },
+    'Gespeicherte Daten müssen dieselben Typen und Geschäftsregeln erfüllen wie CLI-Eingaben' => function (): void {
+        withStorageFile(function (string $path): void {
+            $storage = new JsonStorage($path);
+            $store = createStore();
+            $store->borrowGame(3, new Person('Alex', 18));
+            $storage->save($store);
+            $validData = json_decode(file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+            $invalidChanges = [
+                function (array &$data): void { $data['shelves'][0]['id'] = '1'; },
+                function (array &$data): void { $data['shelves'][0]['capacity'] = 0; },
+                function (array &$data): void { $data['shelves'][0]['capacity'] = 1; },
+                function (array &$data): void { $data['shelves'][] = $data['shelves'][0]; },
+                function (array &$data): void { $data['shelves'][1]['games'][0]['id'] = 1; },
+                function (array &$data): void { $data['shelves'][0]['games'][0]['title'] = ' '; },
+                function (array &$data): void { $data['shelves'][0]['games'][0]['usk'] = 7; },
+                function (array &$data): void { $data['shelves'][0]['games'][0]['minPlayers'] = 0; },
+                function (array &$data): void { $data['shelves'][0]['games'][0]['maxPlayers'] = 0; },
+                function (array &$data): void { unset($data['shelves'][0]['games'][0]['platform']); },
+                function (array &$data): void { unset($data['shelves'][0]['games'][0]['borrower']); },
+                function (array &$data): void { $data['shelves'][0]['games'][0]['borrower'] = false; },
+                function (array &$data): void { $data['shelves'][0]['games'][1]['borrower']['name'] = ''; },
+                function (array &$data): void { $data['shelves'][0]['games'][1]['borrower']['age'] = 100; },
+                function (array &$data): void { $data['shelves'][0]['games'][1]['borrower']['age'] = 17; },
+            ];
+
+            foreach ($invalidChanges as $change) {
+                $data = $validData;
+                $change($data);
+                $json = json_encode($data, JSON_THROW_ON_ERROR);
+                file_put_contents($path, $json);
+                expectException(RuntimeException::class, fn () => $storage->load());
+                expect(file_get_contents($path) === $json, 'Abgewiesene Daten müssen unverändert bleiben.');
+            }
+        });
+    },
+    'Nicht als JSON darstellbare Daten lassen den gespeicherten Bestand unverändert' => function (): void {
+        withStorageFile(function (string $path): void {
+            $storage = new JsonStorage($path);
+            $store = createStore();
+            $storage->save($store);
+            $before = file_get_contents($path);
+            $store->addNewGame(2, "Ungültiges UTF-8: \xFF", 'Switch', 0, 1, 4);
+            expectException(RuntimeException::class, fn () => $storage->save($store));
+            expect(file_get_contents($path) === $before, 'Ein JSON-Fehler darf die vorhandene Datei nicht verändern.');
+        });
+    },
+    'Dateifehler werden gemeldet und temporäre Schreibdateien aufgeräumt' => function (): void {
+        withStorageFile(function (string $path): void {
+            $storage = new JsonStorage($path);
+            mkdir($path);
+            expectException(RuntimeException::class, fn () => $storage->save(createStore()));
+            expect(is_dir($path), 'Das bestehende Ziel darf nicht verändert werden.');
+            expect(glob(dirname($path) . '/.spieleverleih-*') === [], 'Temporäre Schreibdateien müssen entfernt werden.');
+            rmdir($path);
+            $storage->save(createStore());
+            expect(count($storage->load()->getAllGames()) === 3, 'Speichern muss nach Beheben des Dateifehlers funktionieren.');
+            expectException(RuntimeException::class, fn () => new JsonStorage(dirname($path) . '/fehlt/bestand.json'));
+        });
+    },
+    'Eine Datendatei kann nur von einem geöffneten Speicher gleichzeitig verwendet werden' => function (): void {
+        withStorageFile(function (string $path): void {
+            $first = new JsonStorage($path);
+            expectException(RuntimeException::class, fn () => new JsonStorage($path));
+            $first->save(createStore());
+            unset($first);
+            $second = new JsonStorage($path);
+            expect(count($second->load()->getAllGames()) === 3, 'Nach Freigabe muss die Datei wieder verwendbar sein.');
+        });
+    },
     'Neue Spiele erhalten automatisch fortlaufende IDs über alle Regale hinweg' => function (): void {
         $store = new GameStore();
         $store->addShelf(1, 2);
@@ -186,6 +349,7 @@ $tests = [
     },
     'Unbekannte und doppelte Regal-IDs werden behandelt' => function (): void {
         $store = createStore();
+        expectException(OutOfBoundsException::class, fn () => $store->getGamesInShelf(999));
         expectException(OutOfBoundsException::class, fn () => $store->addGame(999, new Game(4, 'Neu', 'Switch', 0, 1, 2)));
         expectException(InvalidArgumentException::class, fn () => $store->addShelf(1, 99));
         expect(count($store->getAllGames()) === 3, 'Die Spiele dürfen nicht verändert werden.');
