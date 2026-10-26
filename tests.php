@@ -69,6 +69,113 @@ function withStorageFile(callable $test): void
 }
 
 $tests = [
+    'Spieldaten können bei gleicher ID und Regalzuordnung auch im vollen Regal bearbeitet werden' => function (): void {
+        $store = createStore();
+        $before = $store->getShelfOverview();
+        $updated = $store->updateGame(1, 'Mario Kart Deluxe', 'Switch 2', 12, 2, 8);
+        expect($store->getGameById(1) === $updated, 'Das bearbeitete Spiel fehlt im Bestand.');
+        expect($updated->platform === 'Switch 2' && $updated->usk === 12, 'Plattform oder USK wurde nicht geändert.');
+        expect($updated->minPlayers === 2 && $updated->maxPlayers === 8, 'Die Spieleranzahl wurde nicht geändert.');
+        expect($store->searchGames('Mario Kart 8') === [], 'Der alte Titel darf nicht mehr gefunden werden.');
+        expect($store->searchGames('Deluxe') === [$updated], 'Der neue Titel muss gefunden werden.');
+        expect($store->getGamesInShelf(1)[0] === $updated, 'Das Spiel muss im ursprünglichen Regal bleiben.');
+        expect($store->getShelfOverview() === $before, 'Bearbeiten darf keinen weiteren Platz belegen.');
+        expectException(DomainException::class, fn () => $store->borrowGame(1, new Person('Alex', 11)));
+    },
+    'Ungültige Änderungen lassen sämtliche bisherigen Spieldaten unverändert' => function (): void {
+        $store = createStore();
+        $original = $store->getGameById(1);
+        $before = $store->getShelfOverview();
+        $invalidDetails = [
+            ['', 'Switch', 0, 1, 4],
+            ['Neu', ' ', 0, 1, 4],
+            ['Neu', 'Switch', 7, 1, 4],
+            ['Neu', 'Switch', 0, 0, 4],
+            ['Neu', 'Switch', 0, 4, 3],
+        ];
+
+        foreach ($invalidDetails as $details) {
+            expectException(InvalidArgumentException::class, fn () => $store->updateGame(1, ...$details));
+            expect($store->getGameById(1) === $original, 'Eine ungültige Änderung darf das Original nicht ersetzen.');
+            expect($store->getShelfOverview() === $before, 'Eine ungültige Änderung darf die Belegung nicht ändern.');
+        }
+    },
+    'Ausgeliehene Spiele können erst nach der Rückgabe bearbeitet werden' => function (): void {
+        $store = createStore();
+        $person = new Person('Alex', 20);
+        $store->borrowGame(1, $person);
+        expectException(DomainException::class, fn () => $store->updateGame(1, 'Neu', 'Switch', 0, 1, 4));
+        expect($store->getGameById(1)->title === 'Mario Kart 8', 'Der Titel darf während einer Ausleihe nicht verändert werden.');
+        expect($store->getGameById(1)->getBorrower() === $person, 'Die laufende Ausleihe muss erhalten bleiben.');
+        $store->returnGame(1);
+        expect($store->updateGame(1, 'Neu', 'Switch', 0, 1, 4)->title === 'Neu', 'Nach der Rückgabe muss Bearbeiten funktionieren.');
+    },
+    'Löschen entfernt das Spiel aus Suche und Bestand und gibt seinen Regalplatz frei' => function (): void {
+        $store = createStore();
+        $otherGame = $store->getGameById(3);
+        $store->removeGame(1);
+        expectException(OutOfBoundsException::class, fn () => $store->getGameById(1));
+        expectException(OutOfBoundsException::class, fn () => $store->removeGame(1));
+        expect($store->searchGames('Mario') === [], 'Ein gelöschtes Spiel darf nicht mehr gefunden werden.');
+        expect(count($store->getAllGames()) === 2, 'Das gelöschte Spiel ist noch im Bestand.');
+        expect($store->getShelfOverview()[0]['gameCount'] === 1, 'Der Regalplatz wurde nicht freigegeben.');
+        expect($store->getGameById(3) === $otherGame, 'Andere Spiele dürfen nicht verändert werden.');
+        $newGame = $store->addNewGame(1, 'Neues Spiel', 'Switch', 0, 1, 4);
+        expect($newGame->id === 4, 'Ein neues Spiel muss ohne ID-Kollision auf den freien Platz passen.');
+    },
+    'Ausgeliehene Spiele können erst nach der Rückgabe gelöscht werden' => function (): void {
+        $store = createStore();
+        $person = new Person('Alex', 20);
+        $before = $store->getShelfOverview();
+        $store->borrowGame(1, $person);
+        expectException(DomainException::class, fn () => $store->removeGame(1));
+        expect($store->getGameById(1)->getBorrower() === $person, 'Die Ausleihe muss nach abgewiesenem Löschen erhalten bleiben.');
+        expect($store->getShelfOverview() === $before, 'Der reservierte Regalplatz muss erhalten bleiben.');
+        $store->returnGame(1);
+        $store->removeGame(1);
+        expectException(OutOfBoundsException::class, fn () => $store->getGameById(1));
+    },
+    'Ein Regal nimmt beim Ersetzen kein unbekanntes Spiel auf und behandelt unbekannte Lösch-IDs' => function (): void {
+        $shelf = new Shelf(1, 2);
+        $game = new Game(1, 'Mario Kart 8', 'Switch', 0, 1, 4);
+        $shelf->addGame($game);
+        expectException(OutOfBoundsException::class, fn () => $shelf->replaceGame(new Game(2, 'Neu', 'Switch', 0, 1, 4)));
+        expectException(OutOfBoundsException::class, fn () => $shelf->removeGame(2));
+        expect($shelf->getGames() === [$game], 'Fehlgeschlagene Regalaktionen dürfen den Inhalt nicht verändern.');
+    },
+    'Änderungen und Löschungen bleiben nach Speichern und erneutem Laden erhalten' => function (): void {
+        withStorageFile(function (string $path): void {
+            $storage = new JsonStorage($path);
+            $store = createStore();
+            $store->updateGame(1, 'Mario Kart Deluxe', 'Switch 2', 12, 2, 8);
+            $store->removeGame(2);
+            $storage->save($store);
+            unset($storage);
+            $storage = new JsonStorage($path);
+            $loaded = $storage->load();
+            $game = $loaded->getGameById(1);
+            expect($game->title === 'Mario Kart Deluxe' && $game->platform === 'Switch 2', 'Geänderte Texte wurden nicht gespeichert.');
+            expect($game->usk === 12 && $game->minPlayers === 2 && $game->maxPlayers === 8, 'Geänderte Zahlen wurden nicht gespeichert.');
+            expectException(OutOfBoundsException::class, fn () => $loaded->getGameById(2));
+            expect($loaded->getShelfOverview() === $store->getShelfOverview(), 'Die geänderte Belegung wurde nicht gespeichert.');
+        });
+    },
+    'Ein vollständig gelöschter Spielebestand bleibt leer und kann wieder befüllt werden' => function (): void {
+        withStorageFile(function (string $path): void {
+            $storage = new JsonStorage($path);
+            $store = createStore();
+
+            foreach ($store->getAllGames() as $game) {
+                $store->removeGame($game->id);
+            }
+
+            $storage->save($store);
+            $loaded = $storage->load();
+            expect($loaded->getAllGames() === [], 'Gelöschte Spiele dürfen beim Laden nicht wieder erscheinen.');
+            expect(count($loaded->getShelfOverview()) === 2, 'Leere Regale müssen erhalten bleiben.');
+            expect($loaded->addNewGame(1, 'Neustart', 'Switch', 0, 1, 2)->id === 1, 'Bei leerem Bestand beginnt die ID-Vergabe wieder bei 1.');
+        });
+    },
     'Eine fehlende Datendatei wird von einem gespeicherten leeren Laden unterschieden' => function (): void {
         withStorageFile(function (string $path): void {
             $storage = new JsonStorage($path);
@@ -339,12 +446,14 @@ $tests = [
         expectException(InvalidArgumentException::class, fn () => $shelf->addGame(new Game(1, 'Duplikat', 'Switch', 0, 1, 2)));
         expect($shelf->getGames() === [$game], 'Das Original muss erhalten bleiben.');
     },
-    'Unbekannte Spiel-IDs werden bei Suche, Ausleihe und Rückgabe behandelt' => function (): void {
+    'Unbekannte Spiel-IDs werden bei Bestands- und Ausleihaktionen behandelt' => function (): void {
         $store = createStore();
         foreach ([-1, 0, 999] as $id) {
             expectException(OutOfBoundsException::class, fn () => $store->getGameById($id));
             expectException(OutOfBoundsException::class, fn () => $store->borrowGame($id, new Person('Alex', 20)));
             expectException(OutOfBoundsException::class, fn () => $store->returnGame($id));
+            expectException(OutOfBoundsException::class, fn () => $store->updateGame($id, 'Neu', 'Switch', 0, 1, 4));
+            expectException(OutOfBoundsException::class, fn () => $store->removeGame($id));
         }
     },
     'Unbekannte und doppelte Regal-IDs werden behandelt' => function (): void {

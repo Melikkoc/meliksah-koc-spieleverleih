@@ -8,7 +8,7 @@ require_once __DIR__ . '/src/Shelf.php';
 require_once __DIR__ . '/src/GameStore.php';
 require_once __DIR__ . '/src/JsonStorage.php';
 
-function readInput(string $prompt): string
+function readInput(string $prompt, string $default = ''): string
 {
     echo $prompt;
     $input = fgets(STDIN);
@@ -18,13 +18,15 @@ function readInput(string $prompt): string
         exit(0);
     }
 
-    return trim($input);
+    $input = trim($input);
+
+    return $input === '' ? $default : $input;
 }
 
-function readInteger(string $prompt): int
+function readInteger(string $prompt, ?int $default = null): int
 {
     // Auch Dezimalzahlen, Text und Werte außerhalb des int-Bereichs werden abgewiesen.
-    $value = filter_var(readInput($prompt), FILTER_VALIDATE_INT);
+    $value = filter_var(readInput($prompt, $default === null ? '' : (string) $default), FILTER_VALIDATE_INT);
 
     if ($value === false) {
         throw new InvalidArgumentException('Bitte eine gültige ganze Zahl eingeben.');
@@ -102,6 +104,8 @@ while (true) {
         . "4. Spiel zurückgeben\n"
         . "5. Regale und Kapazitäten anzeigen\n"
         . "6. Neues Spiel zu einem Regal hinzufügen\n"
+        . "7. Spiel bearbeiten\n"
+        . "8. Spiel löschen\n"
         . "0. Programm beenden\n\n";
 
     try {
@@ -152,12 +156,44 @@ while (true) {
                 printf("„%s“ wurde mit Spiel-ID %d zu Regal %d hinzugefügt.\n", $game->title, $game->id, $shelfId);
                 break;
 
+            case '7':
+                $gameId = readInteger('Spiel-ID: ');
+                $game = $store->getGameById($gameId);
+                printGames([$game]);
+                echo "Enter übernimmt den bisherigen Wert in eckigen Klammern.\n";
+                $updatedGame = $store->updateGame(
+                    $gameId,
+                    readInput(sprintf('Titel [%s]: ', $game->title), $game->title),
+                    readInput(sprintf('Plattform [%s]: ', $game->platform), $game->platform),
+                    readInteger(sprintf('USK (0, 6, 12, 16, 18) [%d]: ', $game->usk), $game->usk),
+                    readInteger(sprintf('Minimale Spieleranzahl [%d]: ', $game->minPlayers), $game->minPlayers),
+                    readInteger(sprintf('Maximale Spieleranzahl [%d]: ', $game->maxPlayers), $game->maxPlayers),
+                );
+                $storage->save($store);
+                printf("Spiel %d wurde bearbeitet: „%s“.\n", $gameId, $updatedGame->title);
+                break;
+
+            case '8':
+                $gameId = readInteger('Spiel-ID: ');
+                $game = $store->getGameById($gameId);
+                printGames([$game]);
+
+                if (!in_array(strtolower(readInput('Dieses Spiel wirklich löschen? (j/N): ')), ['j', 'ja'], true)) {
+                    echo "Löschen abgebrochen.\n";
+                    break;
+                }
+
+                $store->removeGame($gameId);
+                $storage->save($store);
+                printf("„%s“ (Spiel-ID %d) wurde gelöscht.\n", $game->title, $gameId);
+                break;
+
             case '0':
                 echo "Auf Wiedersehen!\n";
                 exit(0);
 
             default:
-                echo "Ungültige Auswahl. Bitte einen Menüpunkt von 0 bis 6 wählen.\n";
+                echo "Ungültige Auswahl. Bitte einen Menüpunkt von 0 bis 8 wählen.\n";
         }
     } catch (InvalidArgumentException | DomainException | OutOfBoundsException | OverflowException $exception) {
         // Nach einem erwartbaren Fehler kann der Benutzer im Hauptmenü eine neue Aktion wählen.

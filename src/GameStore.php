@@ -57,6 +57,40 @@ final class GameStore
         return $game;
     }
 
+    public function updateGame(
+        int $id,
+        string $title,
+        string $platform,
+        int $usk,
+        int $minPlayers,
+        int $maxPlayers,
+    ): Game {
+        $shelf = $this->getShelfForGame($id);
+        // Ein neues Objekt validiert alle Angaben, bevor das bisherige ersetzt wird.
+        $game = new Game($id, $title, $platform, $usk, $minPlayers, $maxPlayers);
+        $shelf->replaceGame($game);
+
+        return $game;
+    }
+
+    public function removeGame(int $id): void
+    {
+        $this->getShelfForGame($id)->removeGame($id);
+    }
+
+    private function getShelfForGame(int $id): Shelf
+    {
+        foreach ($this->shelves as $shelf) {
+            foreach ($shelf->getGames() as $game) {
+                if ($game->id === $id) {
+                    return $shelf;
+                }
+            }
+        }
+
+        throw new OutOfBoundsException(sprintf('Spiel %d existiert nicht.', $id));
+    }
+
     /** @return list<Game> */
     public function getGamesInShelf(int $id): array
     {

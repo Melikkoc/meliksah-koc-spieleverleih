@@ -33,6 +33,12 @@ Dieses Repository enthält einen kleinen Spieleverleih als CLI-Anwendung in nati
 
 ## Sicherheit und Robustheit
 
+- Die Menüpunkte `7` und `8` bearbeiten beziehungsweise löschen Spiele und speichern erfolgreiche Änderungen direkt als JSON.
+- Nur verfügbare Spiele dürfen bearbeitet oder gelöscht werden; aktive Ausleihen müssen zunächst zurückgegeben werden.
+- Beim Bearbeiten bleiben ID und Regalzuordnung erhalten; validiere alle neuen Angaben vor dem Ersetzen des bisherigen Spielobjekts.
+- Enter übernimmt im Bearbeitungsdialog den bisherigen Feldwert; vor dem Löschen fragt die CLI nach einer Bestätigung.
+- Löschen gibt den Regalplatz frei; leere Regale und ein leerer gespeicherter Spielebestand bleiben beim Laden erhalten.
+
 - Behandle sämtliche CLI-Eingaben als unzuverlässig: prüfe Typ, Format, Wertebereich und Existenz referenzierter Daten, bevor du Zustände änderst.
 - Stelle sicher, dass abgelehnte Aktionen bestehende Daten nicht teilweise verändern.
 - Vermeide `eval`, unnötige Shell-Aufrufe, dynamische Includes und unkontrollierte Datei- oder Netzwerkzugriffe.

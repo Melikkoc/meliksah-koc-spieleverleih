@@ -34,6 +34,31 @@ final class Shelf
         $this->games[$game->id] = $game;
     }
 
+    public function replaceGame(Game $game): void
+    {
+        $existingGame = $this->games[$game->id]
+            ?? throw new OutOfBoundsException(sprintf('Spiel %d existiert nicht in Regal %d.', $game->id, $this->id));
+
+        if (!$existingGame->isAvailable()) {
+            throw new DomainException(sprintf('„%s“ muss vor dem Bearbeiten zurückgegeben werden.', $existingGame->title));
+        }
+
+        // Dieselbe ID behält ihren Regalplatz; auch ein volles Regal kann so bearbeitet werden.
+        $this->games[$game->id] = $game;
+    }
+
+    public function removeGame(int $id): void
+    {
+        $game = $this->games[$id]
+            ?? throw new OutOfBoundsException(sprintf('Spiel %d existiert nicht in Regal %d.', $id, $this->id));
+
+        if (!$game->isAvailable()) {
+            throw new DomainException(sprintf('„%s“ muss vor dem Löschen zurückgegeben werden.', $game->title));
+        }
+
+        unset($this->games[$id]);
+    }
+
     /** @return list<Game> */
     public function getGames(): array
     {
